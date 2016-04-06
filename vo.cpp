@@ -188,7 +188,7 @@ int main( int argc, char** argv ) {
     numKP1 = numKP2;
 
     FAST(img2g, keypoints2, threshold);
-    for (int loopIteration=0; loopIteration<5000; loopIteration++) { // Main Loop.
+    for (int loopIteration=0; true; loopIteration++) { // Main Loop.
         { // GPU code for descriptors and matching.
             cudaEventRecord(start, 0);
             latch( img2g.data, h_K2, d_D2, &numKP2, maxKP, d_K, d_I, &keypoints2, WIDTH, HEIGHT, latchFinished );
@@ -309,7 +309,7 @@ int main( int argc, char** argv ) {
             getMatches(maxKP, h_M1, d_M1);
             getMatches(maxKP, h_M2, d_M2);
             cudaEventElapsedTime(&time, start, stop);
-            cout << "10:" << (time) << endl; // Plot total asynchronous GPU time.
+            cout << "10:" << (time+(1000*(clock() - timer)/(double)CLOCKS_PER_SEC)) << endl; // Plot total asynchronous GPU time.
             for (int i=0; i<numKP0; i++) {
                 if (h_M1[i] >= 0 && h_M1[i] < numKP1 && h_M2[h_M1[i]] == i) {
                     goodMatches.push_back( DMatch(i, h_M1[i], 0)); // For drawing matches.
