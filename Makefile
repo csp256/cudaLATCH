@@ -6,6 +6,9 @@ vo: latch.o bitMatcher.o #fast.o
 demo: drone.mp4 vo
 	./vo drone.mp4 620 | perl ./driveGnuPlotStreams.pl 11 4 200 200 200 200 0 0 0 0 0 0 0 0 950x200+960+30 950x200+960+780 950x200+960+280 950x200+960+530 'pitch' 'yaw' 'roll' 'polar translation angle' 'azimuthal translation angle' 'z' 'keypoints' 'matches' '100 * threshold' 'cpu [ms]' 'gpu [ms]' 0 0 0 1 1 1 2 2 2 3 3
 
+demo_no_gnuplot: drone.mp4 vo
+	./vo drone.mp4 620
+
 drone.mp4:
 	youtube-dl -f 137 https://www.youtube.com/watch?v=wneCezU_VQ4
 	mv Raw\ FPV\ Training\ Session\ -\ Dirt\ Bike\ Visit\ in\ Park-wneCezU_VQ4.mp4 drone.mp4

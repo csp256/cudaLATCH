@@ -24,6 +24,25 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
    }
 }
 
+#define checkLaunchError()                                            \
+do {                                                                  \
+    /* Check synchronous errors, i.e. pre-launch */                   \
+    cudaError_t err = cudaGetLastError();                             \
+    if (cudaSuccess != err) {                                         \
+        fprintf (stderr, "Cuda error in file '%s' in line %i : %s.\n",\
+                 __FILE__, __LINE__, cudaGetErrorString(err) );       \
+        exit(EXIT_FAILURE);                                           \
+    }                                                                 \
+    /* Check asynchronous errors, i.e. kernel failed (ULF) */         \
+    err = cudaThreadSynchronize();                                    \
+    if (cudaSuccess != err) {                                         \
+        fprintf (stderr, "Cuda error in file '%s' in line %i : %s.\n",\
+                 __FILE__, __LINE__, cudaGetErrorString( err) );      \
+        exit(EXIT_FAILURE);                                           \
+    }                                                                 \
+} while (0)
+
+
 // Sometimes the recovered pose is 180 degrees off...? I thought cheirality test would handle that, but apparently not always.
 double dist2(Mat a, Mat b) {
     double s = 0.0;
@@ -44,7 +63,7 @@ int main( int argc, char** argv ) {
     const int maxKP = 512 * 15;
     const bool showMatches = true;
     // Shows every Nth processed frame's matches.
-    const int showMatchesInterval = 9;
+    const int showMatchesInterval = 5;
     const bool showVideo = true;
     // Shows every Nth processed frame.
     const int showVideoInterval = 1;
@@ -54,8 +73,10 @@ int main( int argc, char** argv ) {
     int skipFrames = 0;
     // Threshold for FAST detector
     int threshold = 50;
-    int targetKP = 6000;
-    int tolerance = 500;
+    int targetKP = 3000;
+    int tolerance = 200;
+    int maxLoops = 15;
+    const bool gnuplot = true;
 
     VideoCapture cap;
     if (argc == 1) {
@@ -118,34 +139,41 @@ int main( int argc, char** argv ) {
     float time;
 
     // Sizes for device and host pointers
-    size_t sizeK = maxKP * sizeof(int) * 2; // K for keypoints
+    size_t sizeK = maxKP * sizeof(float) * 4; // K for keypoints
     size_t sizeI = WIDTH * HEIGHT * sizeof(unsigned char); // I for Image
     size_t sizeD = maxKP * (2048 / 32) * sizeof(unsigned int); // D for Descriptor
     size_t sizeM = maxKP * sizeof(int); // M for Matches
+    size_t sizeMask = 64 * sizeof(float);
 
     // Host pointers
-    int *h_K1, *h_K2;
-    cudaMallocHost((void **) &h_K1, maxKP * 2 * sizeof(int));
-    cudaMallocHost((void **) &h_K2, maxKP * 2 * sizeof(int));
+    float *h_K1, *h_K2;
+    cudaMallocHost((void **) &h_K1, sizeK);
+    cudaMallocHost((void **) &h_K2, sizeK);
     // For reasons opaque to me, allocating both (but not either) h_M1 or h_M2
     // with cudaMallocHost segfaults, apparently after graceful exit? So neither of them are pinned.
     int h_M1[maxKP];
     int h_M2[maxKP];
+    float h_mask[64];
+    for (int i=0; i<64; i++) { h_mask[i] = 1.0f; }
 
     // Device pointers
     unsigned char *d_I;
     unsigned int *d_D1, *d_D2, *uIntSwapPointer;
-    int *d_K, *d_M1, *d_M2;
+    int *d_M1, *d_M2;
+    float *d_K, *d_mask;
     cudaCalloc((void **) &d_K, sizeK);
-    cudaCalloc((void **) &d_I, sizeI);
     cudaCalloc((void **) &d_D1, sizeD);
     cudaCalloc((void **) &d_D2, sizeD);
     cudaCalloc((void **) &d_M1, sizeM);
     cudaCalloc((void **) &d_M2, sizeM);
+    cudaCalloc((void **) &d_mask, sizeM);
 
     // The patch triplet locations for LATCH fits in texture memory cache.
     cudaArray* patchTriplets;
     loadPatchTriplets(patchTriplets);
+    size_t pitch;
+    initImage(&d_I, WIDTH, HEIGHT, &pitch);
+    initMask(&d_mask, h_mask);
 
     // Events allow asynchronous, nonblocking launch of subsequent kernels after a given event has happened.
     cudaEvent_t latchFinished;
@@ -156,9 +184,9 @@ int main( int argc, char** argv ) {
     cudaStreamCreate(&streanumKP2);
 
     FAST(img1g, keypoints1, threshold);
-    latch( img1g.data, h_K1, d_D1, &numKP1, maxKP, d_K, d_I, &keypoints1, WIDTH, HEIGHT, latchFinished );
+    latch( img1g.data, d_I, pitch, h_K1, d_D1, &numKP1, maxKP, d_K, &keypoints1, WIDTH, HEIGHT, d_mask, latchFinished );
     FAST(img2g, keypoints2, threshold); // This call to fast is concurrent with above execution.
-    latch( img2g.data, h_K2, d_D2, &numKP2, maxKP, d_K, d_I, &keypoints2, WIDTH, HEIGHT, latchFinished );
+    latch( img2g.data, d_I, pitch, h_K2, d_D2, &numKP2, maxKP, d_K, &keypoints2, WIDTH, HEIGHT, d_mask, latchFinished );
     bitMatcher( d_D1, d_D2, numKP1, numKP2, maxKP, d_M1, matchThreshold, streanumKP1, latchFinished );
     bitMatcher( d_D2, d_D1, numKP2, numKP1, maxKP, d_M2, matchThreshold, streanumKP2, latchFinished );
     timer = clock();
@@ -188,10 +216,10 @@ int main( int argc, char** argv ) {
     numKP1 = numKP2;
 
     FAST(img2g, keypoints2, threshold);
-    for (int loopIteration=0; true; loopIteration++) { // Main Loop.
+    for (int loopIteration=0; loopIteration < maxLoops || maxLoops == -1; loopIteration++) { // Main Loop.
         { // GPU code for descriptors and matching.
             cudaEventRecord(start, 0);
-            latch( img2g.data, h_K2, d_D2, &numKP2, maxKP, d_K, d_I, &keypoints2, WIDTH, HEIGHT, latchFinished );
+            latch( img2g.data, d_I, pitch, h_K2, d_D2, &numKP2, maxKP, d_K, &keypoints2, WIDTH, HEIGHT, d_mask, latchFinished);
             bitMatcher( d_D1, d_D2, numKP1, numKP2, maxKP, d_M1, matchThreshold, streanumKP1, latchFinished );
             bitMatcher( d_D2, d_D1, numKP2, numKP1, maxKP, d_M2, matchThreshold, streanumKP2, latchFinished );
             cudaEventRecord(stop, 0);
@@ -281,15 +309,17 @@ int main( int argc, char** argv ) {
                     cerr << "Too few matches! Not going to try to recover pose this frame." << endl;
                 }
                 // To prevent the graphs from desynchronizing from each other, we have to output this unconditionally.
-                for (int i=0; i<3; i++) {
-                    cout << i << ":" << rod.at<double>(i) * 57.2957795 << endl; // Output Rodrigues vector, rescaled to degrees
+                if (gnuplot) {
+                    for (int i=0; i<3; i++) {
+                        cout << i << ":" << rod.at<double>(i) * 57.2957795 << endl; // Output Rodrigues vector, rescaled to degrees
+                    }
+                    // T is unit norm (scale-less) and often erroneously sign-reversed.
+                    if (T.at<double>(2) < 0) T = -T; // Assume dominate motion is forward... (this is not an elegant assumption)
+                    double theta = atan2(T.at<double>(0), T.at<double>(2));
+                    double phi = atan2(T.at<double>(1), T.at<double>(2));
+                    cout << 3 << ":" << theta * 57.2957795 << endl; // Plot polar translation angle
+                    cout << 4 << ":" << phi * 57.2957795 << endl; // Plot azimuthal translation angle
                 }
-                // T is unit norm (scale-less) and often erroneously sign-reversed.
-                if (T.at<double>(2) < 0) T = -T; // Assume dominate motion is forward... (this is not an elegant assumption)
-                double theta = atan2(T.at<double>(0), T.at<double>(2));
-                double phi = atan2(T.at<double>(1), T.at<double>(2));
-                cout << 3 << ":" << theta * 57.2957795 << endl; // Plot polar translation angle
-                cout << 4 << ":" << phi * 57.2957795 << endl; // Plot azimuthal translation angle
             }
             { // run FAST detector on the CPU for next frame (get ready for next loop iteration).
                 FAST(img2g, keypoints2, threshold);
@@ -299,9 +329,11 @@ int main( int argc, char** argv ) {
                 if (threshold < 1) threshold = 1;
             }
         }
-        time = (1000*(clock() - timer)/(double)CLOCKS_PER_SEC);
-        cout << "9:" << time << endl; // Plot CPU time.
-        timer = clock();
+        if (gnuplot) {
+            time = (1000*(clock() - timer)/(double)CLOCKS_PER_SEC);
+            cout << "9:" << time << endl; // Plot CPU time.
+            timer = clock();
+        }
         { // Get new GPU results
             p1.clear();
             p2.clear();
@@ -309,7 +341,9 @@ int main( int argc, char** argv ) {
             getMatches(maxKP, h_M1, d_M1);
             getMatches(maxKP, h_M2, d_M2);
             cudaEventElapsedTime(&time, start, stop);
-            cout << "10:" << (time+(1000*(clock() - timer)/(double)CLOCKS_PER_SEC)) << endl; // Plot total asynchronous GPU time.
+            if (gnuplot) {
+                cout << "10:" << (time+(1000*(clock() - timer)/(double)CLOCKS_PER_SEC)) << endl; // Plot total asynchronous GPU time.
+            }
             for (int i=0; i<numKP0; i++) {
                 if (h_M1[i] >= 0 && h_M1[i] < numKP1 && h_M2[h_M1[i]] == i) {
                     goodMatches.push_back( DMatch(i, h_M1[i], 0)); // For drawing matches.
@@ -318,14 +352,15 @@ int main( int argc, char** argv ) {
                 }
             }
         }
-        cout << "6:" << numKP1 << endl; // Plot number of keypoints.
-        cout << "7:" << p1.size() << endl; // Plot number of matches.
-        cout << "8:" << 100*threshold << endl; // Plot current threshold for FAST.
+        if (gnuplot) {
+            cout << "6:" << numKP1 << endl; // Plot number of keypoints.
+            cout << "7:" << p1.size() << endl; // Plot number of matches.
+            cout << "8:" << 100*threshold << endl; // Plot current threshold for FAST.
+        }
         totalMatches += p1.size();
     }
     cudaFreeArray(patchTriplets);
     cudaFree(d_K);
-    cudaFree(d_I);
     cudaFree(d_D1);
     cudaFree(d_D2);
     cudaFree(d_M1);

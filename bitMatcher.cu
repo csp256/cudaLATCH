@@ -101,22 +101,22 @@ __global__ void __launch_bounds__(1024, 1)
                     // The compiler throws a hissy fit if you try to make dist an array, and tosses everything into local memory.
                     register int dist0, dist1, dist2, dist3, dist4, dist5, dist6, dist7;
                     // Also, the compiler does not like this being in a (fully unrolled) loop... drama queen.
-                    dist0 = __popc(query[0][0] ^ train[0]) + __popc(query[0][1] ^ train[1]);
-                    dist1 = __popc(query[1][0] ^ train[0]) + __popc(query[1][1] ^ train[1]);
-                    dist2 = __popc(query[2][0] ^ train[0]) + __popc(query[2][1] ^ train[1]);
-                    dist3 = __popc(query[3][0] ^ train[0]) + __popc(query[3][1] ^ train[1]);
-                    dist4 = __popc(query[4][0] ^ train[0]) + __popc(query[4][1] ^ train[1]);
-                    dist5 = __popc(query[5][0] ^ train[0]) + __popc(query[5][1] ^ train[1]);
-                    dist6 = __popc(query[6][0] ^ train[0]) + __popc(query[6][1] ^ train[1]);
-                    dist7 = __popc(query[7][0] ^ train[0]) + __popc(query[7][1] ^ train[1]);
-                    dist0 |= (__popc(query[ 8][0] ^ train[0]) + __popc(query[ 8][1] ^ train[1]))<<16;
-                    dist1 |= (__popc(query[ 9][0] ^ train[0]) + __popc(query[ 9][1] ^ train[1]))<<16;
-                    dist2 |= (__popc(query[10][0] ^ train[0]) + __popc(query[10][1] ^ train[1]))<<16;
-                    dist3 |= (__popc(query[11][0] ^ train[0]) + __popc(query[11][1] ^ train[1]))<<16;
-                    dist4 |= (__popc(query[12][0] ^ train[0]) + __popc(query[12][1] ^ train[1]))<<16;
-                    dist5 |= (__popc(query[13][0] ^ train[0]) + __popc(query[13][1] ^ train[1]))<<16;
-                    dist6 |= (__popc(query[14][0] ^ train[0]) + __popc(query[14][1] ^ train[1]))<<16;
-                    dist7 |= (__popc(query[15][0] ^ train[0]) + __popc(query[15][1] ^ train[1]))<<16;
+                    dist0 = __popc(query[0][0] ^ train[0]);// + __popc(query[0][1] ^ train[1]);
+                    dist1 = __popc(query[1][0] ^ train[0]);// + __popc(query[1][1] ^ train[1]);
+                    dist2 = __popc(query[2][0] ^ train[0]);// + __popc(query[2][1] ^ train[1]);
+                    dist3 = __popc(query[3][0] ^ train[0]);// + __popc(query[3][1] ^ train[1]);
+                    dist4 = __popc(query[4][0] ^ train[0]);// + __popc(query[4][1] ^ train[1]);
+                    dist5 = __popc(query[5][0] ^ train[0]);// + __popc(query[5][1] ^ train[1]);
+                    dist6 = __popc(query[6][0] ^ train[0]);// + __popc(query[6][1] ^ train[1]);
+                    dist7 = __popc(query[7][0] ^ train[0]);// + __popc(query[7][1] ^ train[1]);
+                    dist0 |= (__popc(query[ 8][0] ^ train[0]) /*+ __popc(query[ 8][1] ^ train[1])*/)<<16;
+                    dist1 |= (__popc(query[ 9][0] ^ train[0]) /*+ __popc(query[ 9][1] ^ train[1])*/)<<16;
+                    dist2 |= (__popc(query[10][0] ^ train[0]) /*+ __popc(query[10][1] ^ train[1])*/)<<16;
+                    dist3 |= (__popc(query[11][0] ^ train[0]) /*+ __popc(query[11][1] ^ train[1])*/)<<16;
+                    dist4 |= (__popc(query[12][0] ^ train[0]) /*+ __popc(query[12][1] ^ train[1])*/)<<16;
+                    dist5 |= (__popc(query[13][0] ^ train[0]) /*+ __popc(query[13][1] ^ train[1])*/)<<16;
+                    dist6 |= (__popc(query[14][0] ^ train[0]) /*+ __popc(query[14][1] ^ train[1])*/)<<16;
+                    dist7 |= (__popc(query[15][0] ^ train[0]) /*+ __popc(query[15][1] ^ train[1])*/)<<16;
 
                     dist0 += __shfl_xor(dist0,   1);
                     dist1 += __shfl_xor(dist1,   1);
