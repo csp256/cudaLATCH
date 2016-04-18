@@ -4,8 +4,9 @@ vo: latch.o bitMatcher.o #fast.o
 	g++ `pkg-config --cflags opencv` vo.cpp latch.o bitMatcher.o -I/usr/local/cuda-7.5/include/ -L/usr/local/cuda/lib64 -lcuda -lcudart -L/usr/local/lib -lopencv_stitching -lopencv_superres -lopencv_videostab -lopencv_aruco -lopencv_bgsegm -lopencv_bioinspired -lopencv_ccalib -lopencv_dnn -lopencv_dpm -lopencv_fuzzy -lopencv_line_descriptor -lopencv_optflow -lopencv_plot -lopencv_reg -lopencv_saliency -lopencv_stereo -lopencv_structured_light -lopencv_rgbd -lopencv_surface_matching -lopencv_tracking -lopencv_datasets -lopencv_text -lopencv_face -lopencv_xfeatures2d -lopencv_shape -lopencv_video -lopencv_ximgproc -lopencv_calib3d -lopencv_features2d -lopencv_flann -lopencv_xobjdetect -lopencv_objdetect -lopencv_ml -lopencv_xphoto -lopencv_highgui -lopencv_videoio -lopencv_imgcodecs -lopencv_photo -lopencv_imgproc -lopencv_core -o vo
 
 demo: drone.mp4 vo
-	./vo drone.mp4 620 | perl ./driveGnuPlotStreams.pl 11 4 200 200 200 200 0 0 0 0 0 0 0 0 950x200+960+30 950x200+960+780 950x200+960+280 950x200+960+530 'pitch' 'yaw' 'roll' 'polar translation angle' 'azimuthal translation angle' 'z' 'keypoints' 'matches' '100 * threshold' 'cpu [ms]' 'gpu [ms]' 0 0 0 1 1 1 2 2 2 3 3
-
+	./vo drone.mp4 620 | perl ./driveGnuPlotStreams.pl 12 4 200 4200 200 200 0 0 0 0 0 0 0 0 950x200+960+30 950x200+960+780 950x200+960+280 950x200+960+530 'pitch' 'yaw' 'roll' 'polar translation angle' 'azimuthal translation angle' 'z' 'keypoints' 'matches' '100 * threshold' 'cpu [ms]' 'gpu [ms]' 'defect' 0 0 0 1 1 1 2 2 2 3 3 1
+#620
+#4400
 demo_no_gnuplot: drone.mp4 vo
 	./vo drone.mp4 620
 

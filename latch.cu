@@ -76,7 +76,7 @@ __global__ void __launch_bounds__(1024, 2)
     volatile __shared__ int s_kpOffset[2];
     volatile __shared__ float s_mask[64];
     volatile __shared__ float s_stride[2];
-    volatile __shared__ float s_roi[roiHeight][roiWidth + roiWidthPadding]; // It is faster to operate on floats, even if our image is unsigned char! (we can't guarantee media instructions are available)
+    volatile __shared__ unsigned char s_roi[roiHeight][roiWidth + roiWidthPadding][4]; // It is faster to operate on floats, even if our image is unsigned char! (we can't guarantee media instructions are available)
     volatile __shared__ unsigned int s_out[warpsPerBlock];
     {
         register float mask0, mask1;
@@ -96,7 +96,7 @@ __global__ void __launch_bounds__(1024, 2)
                     u = 1.0f;
                     v = 0.0f;
                 } else {
-                    __sincosf(deg2rad * s, &v, &u); // Law & Order
+                    __sincosf(s, &v, &u); // Law & Order
                 }
             }
             s = __shfl(s, 0);
@@ -130,8 +130,8 @@ __global__ void __launch_bounds__(1024, 2)
             s_mask[threadIdx.x + _warpSize] = mask1;
         }
 
-        const register float cN = -c * _warpSizef;
-        const register float sN = -s * _warpSizef;
+        const register float cN = c * -_warpSizef;
+        const register float sN = s * -_warpSizef;
 
         const register float cu = c * threadIdx.x;
         const register float su = s * threadIdx.x;
@@ -143,10 +143,10 @@ __global__ void __launch_bounds__(1024, 2)
         const register float cvN = cv + cN;
         const register float svN = sv + sN;
 
-        s_roi[threadIdx.y            ][threadIdx.x            ] = (float) tex2D(image, cuN - svN + x, suN + cvN + y);
-        s_roi[threadIdx.y            ][threadIdx.x + _warpSize] = (float) tex2D(image, cu  - svN + x, su  + cvN + y);
-        s_roi[threadIdx.y + _warpSize][threadIdx.x + _warpSize] = (float) tex2D(image, cu  - sv  + x, su  + cv  + y);
-        s_roi[threadIdx.y + _warpSize][threadIdx.x            ] = (float) tex2D(image, cuN - sv  + x, suN + cv  + y);
+        s_roi[threadIdx.y            ][threadIdx.x            ][0] = (unsigned char) (256.0f * tex2D(image, cuN - svN + x, suN + cvN + y));
+        s_roi[threadIdx.y            ][threadIdx.x + _warpSize][0] = (unsigned char) (256.0f * tex2D(image, cu  - svN + x, su  + cvN + y));
+        s_roi[threadIdx.y + _warpSize][threadIdx.x + _warpSize][0] = (unsigned char) (256.0f * tex2D(image, cu  - sv  + x, su  + cv  + y));
+        s_roi[threadIdx.y + _warpSize][threadIdx.x            ][0] = (unsigned char) (256.0f * tex2D(image, cuN - sv  + x, suN + cv  + y));
     }
     register unsigned int out = 0;
     const register int wrappedX =      threadIdx.x % patchSize; // Offset for patch, interlaced to decrease padding needed for shared memory bank conflict avoidance
@@ -193,19 +193,19 @@ __global__ void __launch_bounds__(1024, 2)
             // This assumes an 8x8 patch. As there are only 32 threads per warp, each thread will pull two values from each thread.
             // The access pattern is interleaved to decrease the amount of shared memory padding necessary to avoid bank conflicts:
             //      each thread pulls a verticle pair from each patch.
-            const register float tavek0 = s_roi[tavekIndexY + wrappedY  ][tavekIndexX + wrappedX]; // Tavek means "between".
-            const register float tavek1 = s_roi[tavekIndexY + wrappedY+1][tavekIndexX + wrappedX]; // It is our root patch.
-            const register float aleph0 = s_roi[alephIndexY + wrappedY  ][alephIndexX + wrappedX]; // Aleph is "A"
-            const register float aleph1 = s_roi[alephIndexY + wrappedY+1][alephIndexX + wrappedX]; // Similarity to aleph is denoted by a bit set to 0
-            const register float bet0   = s_roi[betIndexY   + wrappedY  ][betIndexX   + wrappedX]; // Bet is "B"
-            const register float bet1   = s_roi[betIndexY   + wrappedY+1][betIndexX   + wrappedX]; // Similarity to bet is denoted by a bit set to 1
+            const register int tavek0 = s_roi[tavekIndexY + wrappedY  ][tavekIndexX + wrappedX][0]; // Tavek means "between".
+            const register int tavek1 = s_roi[tavekIndexY + wrappedY+1][tavekIndexX + wrappedX][0]; // It is our root patch.
+            const register int aleph0 = s_roi[alephIndexY + wrappedY  ][alephIndexX + wrappedX][0]; // Aleph is "A"
+            const register int aleph1 = s_roi[alephIndexY + wrappedY+1][alephIndexX + wrappedX][0]; // Similarity to aleph is denoted by a bit set to 0
+            const register int bet0   = s_roi[betIndexY   + wrappedY  ][betIndexX   + wrappedX][0]; // Bet is "B"
+            const register int bet1   = s_roi[betIndexY   + wrappedY+1][betIndexX   + wrappedX][0]; // Similarity to bet is denoted by a bit set to 1
 
             // Now we compute the sum of squared differences between both patch pairs.
             // First, differences:
-            register float alephDiff0 = (tavek0 - aleph0);
-            register float alephDiff1 = (tavek1 - aleph1);
-            register float betDiff0   = (tavek0 - bet0);
-            register float betDiff1   = (tavek1 - bet1);
+            register int alephDiff0 = (tavek0 - aleph0);
+            register int alephDiff1 = (tavek1 - aleph1);
+            register int betDiff0   = (tavek0 - bet0);
+            register int betDiff1   = (tavek1 - bet1);
             // Then, squared differences
             alephDiff0 *= alephDiff0;
             alephDiff1 *= alephDiff1;
@@ -308,7 +308,55 @@ void initMask(float** d_mask, float* h_mask) {
     cudaMemcpy(*d_mask, h_mask, sizeMask, cudaMemcpyHostToDevice);
 }
 
-void latch( unsigned char* h_I,
+float computeGradient(const unsigned char* img, const int width, const int x, const int y) {
+    float dx = 0.0f;
+    float dy = 0.0f;
+    float delta = 0.0f;
+    int base = x + y*width;
+    int offset;
+
+    offset = 3*width;
+    delta = (img[base + offset] - img[base - offset]);
+    dy += delta;
+
+    offset = 3*width + 1;
+    delta = (img[base + offset] - img[base - offset]);
+    dy += delta * 3 / sqrt(10);
+    dx += delta     / sqrt(10);
+
+    offset = 2*width + 2;
+    delta = (img[base + offset] - img[base - offset]);
+    dy += delta     / sqrt(2);
+    dx += delta     / sqrt(2);
+
+    offset = 1*width + 3;
+    delta = (img[base + offset] - img[base - offset]);
+    dy += delta     / sqrt(10);
+    dx += delta * 3 / sqrt(10);
+
+    offset = 3;
+    delta = (img[base + offset] - img[base - offset]);
+    dx += delta;
+
+    offset = -1*width + 3;
+    delta = (img[base + offset] - img[base - offset]);
+    dy -= delta     / sqrt(10);
+    dx += delta * 3 / sqrt(10);
+
+    offset = -2*width + 2;
+    delta = (img[base + offset] - img[base - offset]);
+    dy -= delta     / sqrt(2);
+    dx += delta     / sqrt(2);
+
+    offset = -3*width + 1;
+    delta = (img[base + offset] - img[base - offset]);
+    dy -= delta * 3 / sqrt(10);
+    dx += delta     / sqrt(10);
+
+    return atan2f(dy, dx);
+}
+
+void latch( Mat imgMat,
             unsigned char* d_I,
             size_t pitch,
             float* h_K,
@@ -317,10 +365,12 @@ void latch( unsigned char* h_I,
             int maxKP,
             float* d_K,
             vector<KeyPoint>* vectorKP,
-            const int width,
-            const int height,
             float* d_mask,
             cudaEvent_t latchFinished) {
+    const unsigned char* h_I = imgMat.data;
+    const int height = imgMat.rows;
+    const int width = imgMat.cols;
+
     // All of these calls are non blocking but serialized.
     // cudaMemsetAsync(d_K, -1, maxKP * sizeof(int) * 4); // Negative one is represented by all '1' bits in both int32 and uchar8.
     // cudaMemsetAsync(d_D,  0, maxKP * (2048 / 32) * sizeof(unsigned int));
@@ -331,8 +381,9 @@ void latch( unsigned char* h_I,
     for (int i=0; i<*keypoints; i+=1) {
         h_K[4*i  ] = (*vectorKP)[i].pt.x;
         h_K[4*i+1] = (*vectorKP)[i].pt.y;
-        h_K[4*i+2] = 1.0f; // (*vectorKP)[i].size); // 1024 times the pixel spacing
-        h_K[4*i+3] = (*vectorKP)[i].angle; // 1024 times the angle in radians
+        h_K[4*i+2] = 1.0f; // (*vectorKP)[i].size);
+        // h_K[4*i+3] = (*vectorKP)[i].angle;
+        h_K[4*i+3] = computeGradient(h_I, width, h_K[4*i  ], h_K[4*i+1]);
     }
     for (int i=*keypoints; i<maxKP; i++) {
         h_K[4*i  ] = -1.0f;

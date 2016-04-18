@@ -63,20 +63,21 @@ int main( int argc, char** argv ) {
     const int maxKP = 512 * 15;
     const bool showMatches = true;
     // Shows every Nth processed frame's matches.
-    const int showMatchesInterval = 5;
+    const int showMatchesInterval = 10;
     const bool showVideo = true;
     // Shows every Nth processed frame.
     const int showVideoInterval = 1;
-    int WIDTH, HEIGHT, totalMatches = 0;
-    const int matchThreshold = 5;
+    int WIDTH, HEIGHT, totalMatches, totalInliers = 0;
+    const int matchThreshold = 12;
     // Discard this many frames for each one processed. Change with +/- keys while running.
     int skipFrames = 0;
     // Threshold for FAST detector
-    int threshold = 50;
+    int threshold = 10;
     int targetKP = 3000;
     int tolerance = 200;
-    int maxLoops = 15;
+    int maxLoops = 4200;
     const bool gnuplot = true;
+    double defect = 0.0;
 
     VideoCapture cap;
     if (argc == 1) {
@@ -102,10 +103,10 @@ int main( int argc, char** argv ) {
         cap.set(CAP_PROP_FRAME_HEIGHT, HEIGHT);
     }
 
-    double f = 1.0;
+    double f = 0.4;
     double data[]= {f*WIDTH,  0.0,  WIDTH*0.5,  0.0, f*HEIGHT, HEIGHT*0.5, 0.0, 0.0, 1.0};
     Mat K(3, 3, CV_64F, data);
-    Mat F, R, T, rod;
+    Mat F, R, T, rod, mask;
     Mat img0, img1, img2, img1g, img2g, imgMatches, E, rodOld;
 
     cap >> img1;
@@ -135,7 +136,7 @@ int main( int argc, char** argv ) {
     vector<Point2f> p1, p2; // Point correspondences for recovering pose.
     int numKP0, numKP1, numKP2; // The actual number of keypoints we are dealing with: just keypoints#.size(), but capped at maxKP.
     int key = -1;
-    clock_t timer;
+    clock_t timer, timer2;
     float time;
 
     // Sizes for device and host pointers
@@ -175,7 +176,8 @@ int main( int argc, char** argv ) {
     initImage(&d_I, WIDTH, HEIGHT, &pitch);
     initMask(&d_mask, h_mask);
 
-    // Events allow asynchronous, nonblocking launch of subsequent kernels after a given event has happened.
+    // Events allow asynchronous, nonblocking launch of subsequent kernels after a given event has happened,
+    // such as completion of a different kernel on a different stream.
     cudaEvent_t latchFinished;
     cudaEventCreate(&latchFinished);
     // You should create a new stream for each bitMatcher kernel you want to launch at once.
@@ -184,9 +186,9 @@ int main( int argc, char** argv ) {
     cudaStreamCreate(&streanumKP2);
 
     FAST(img1g, keypoints1, threshold);
-    latch( img1g.data, d_I, pitch, h_K1, d_D1, &numKP1, maxKP, d_K, &keypoints1, WIDTH, HEIGHT, d_mask, latchFinished );
+    latch( img1g, d_I, pitch, h_K1, d_D1, &numKP1, maxKP, d_K, &keypoints1, d_mask, latchFinished );
     FAST(img2g, keypoints2, threshold); // This call to fast is concurrent with above execution.
-    latch( img2g.data, d_I, pitch, h_K2, d_D2, &numKP2, maxKP, d_K, &keypoints2, WIDTH, HEIGHT, d_mask, latchFinished );
+    latch( img2g, d_I, pitch, h_K2, d_D2, &numKP2, maxKP, d_K, &keypoints2, d_mask, latchFinished );
     bitMatcher( d_D1, d_D2, numKP1, numKP2, maxKP, d_M1, matchThreshold, streanumKP1, latchFinished );
     bitMatcher( d_D2, d_D1, numKP2, numKP1, maxKP, d_M2, matchThreshold, streanumKP2, latchFinished );
     timer = clock();
@@ -216,10 +218,11 @@ int main( int argc, char** argv ) {
     numKP1 = numKP2;
 
     FAST(img2g, keypoints2, threshold);
-    for (int loopIteration=0; loopIteration < maxLoops || maxLoops == -1; loopIteration++) { // Main Loop.
+    int loopIteration = 0;
+    for (; loopIteration < maxLoops || maxLoops == -1; loopIteration++) { // Main Loop.
         { // GPU code for descriptors and matching.
             cudaEventRecord(start, 0);
-            latch( img2g.data, d_I, pitch, h_K2, d_D2, &numKP2, maxKP, d_K, &keypoints2, WIDTH, HEIGHT, d_mask, latchFinished);
+            latch( img2g, d_I, pitch, h_K2, d_D2, &numKP2, maxKP, d_K, &keypoints2, d_mask, latchFinished);
             bitMatcher( d_D1, d_D2, numKP1, numKP2, maxKP, d_M1, matchThreshold, streanumKP1, latchFinished );
             bitMatcher( d_D2, d_D1, numKP2, numKP1, maxKP, d_M2, matchThreshold, streanumKP2, latchFinished );
             cudaEventRecord(stop, 0);
@@ -233,10 +236,11 @@ int main( int argc, char** argv ) {
                         goodMatches, imgMatches, Scalar::all(-1), Scalar::all(-1),
                         vector<char>(), DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS );
                     imshow( "Matches", imgMatches );
+                    needToDraw = true;
                 }
                 if (showVideo && loopIteration % showVideoInterval == 0) {
                     imshow("Video", img1);
-                    key = waitKey(1);
+                    needToDraw = true;
                 }
                 if (needToDraw) {
                     key = waitKey(1);
@@ -247,6 +251,7 @@ int main( int argc, char** argv ) {
                     case (-1):
                     break;
                     case (1048689): // q
+                    case (113): // also q
                         return 0;
                     break;
                     case (1048695): // w
@@ -288,8 +293,19 @@ int main( int argc, char** argv ) {
             }
             { // Solve for and output rotation vector (this gets piped to feedgnuplot).
                 if (10 < p1.size() && 10 < p2.size()) {
-                    E = findEssentialMat(p1, p2, K);
-                    recoverPose(E, p1, p2, R, T);
+                    E = findEssentialMat(p1, p2, f*WIDTH, Point2d(WIDTH*0.5f, HEIGHT*0.5f), RANSAC, 0.999, 3.0, mask);
+                    int inliers = 0;
+                    for (int i=0; i<mask.rows; i++) {
+                        inliers += mask.data[i];
+                    }
+                    totalInliers += inliers;
+                    double size = p1.size();
+                    double r = inliers/max((double)size, 150.0);
+                    r = 1.0 - min(r + 0.05, 1.0);
+                    defect += r*r;
+                    cout << "11:" << r*r << endl;
+
+                    recoverPose(E, p1, p2, R, T, f*WIDTH, Point2d(WIDTH*0.5f, HEIGHT*0.5f), mask);
                     Rodrigues(R, rod);
                     if (loopIteration==0) {
                         rod.copyTo(rodOld);
@@ -306,6 +322,8 @@ int main( int argc, char** argv ) {
                         rodOld.copyTo(rod);
                     }
                 } else {
+                    defect += 1.0;
+                    cout << "11:" << 1.0 << endl;
                     cerr << "Too few matches! Not going to try to recover pose this frame." << endl;
                 }
                 // To prevent the graphs from desynchronizing from each other, we have to output this unconditionally.
@@ -314,11 +332,11 @@ int main( int argc, char** argv ) {
                         cout << i << ":" << rod.at<double>(i) * 57.2957795 << endl; // Output Rodrigues vector, rescaled to degrees
                     }
                     // T is unit norm (scale-less) and often erroneously sign-reversed.
-                    if (T.at<double>(2) < 0) T = -T; // Assume dominate motion is forward... (this is not an elegant assumption)
-                    double theta = atan2(T.at<double>(0), T.at<double>(2));
-                    double phi = atan2(T.at<double>(1), T.at<double>(2));
-                    cout << 3 << ":" << theta * 57.2957795 << endl; // Plot polar translation angle
-                    cout << 4 << ":" << phi * 57.2957795 << endl; // Plot azimuthal translation angle
+                    // if (T.at<double>(2) < 0) T = -T; // Assume dominate motion is forward... (this is not an elegant assumption)
+                    // double theta = atan2(T.at<double>(0), T.at<double>(2));
+                    // double phi = atan2(T.at<double>(1), T.at<double>(2));
+                    // cout << 3 << ":" << theta * 57.2957795 << endl; // Plot polar translation angle
+                    // cout << 4 << ":" << phi * 57.2957795 << endl; // Plot azimuthal translation angle
                 }
             }
             { // run FAST detector on the CPU for next frame (get ready for next loop iteration).
@@ -368,5 +386,8 @@ int main( int argc, char** argv ) {
     cudaFreeHost(h_K1);
     cudaFreeHost(h_K2);
     cerr << "Total matches: " << totalMatches << endl;
+    cerr << "Total inliers: " << totalInliers << endl;
+    cerr << "Defect: " << defect << endl;
+    cerr << "Loop iteration: " << loopIteration << endl;
     return 0;
 }

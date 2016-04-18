@@ -137,7 +137,7 @@ sub main {
 				$q = 1;
             }
         }
-		my $plotInterval = 5;
+		my $plotInterval = 15;
 		if ($max_xcounter % $plotInterval != $plotInterval-1 && $q == 1) {
 			next;
 		}

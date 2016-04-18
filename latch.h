@@ -1,4 +1,4 @@
-void latch( unsigned char *,
+void latch( Mat,
             unsigned char *,
             size_t,
             float *,
@@ -7,8 +7,6 @@ void latch( unsigned char *,
             int,
             float *,
             vector<KeyPoint>*,
-            const int,
-            const int,
             float*,
             cudaEvent_t);
 
