@@ -1,6 +1,8 @@
 # CUDA implementation of the LATCH descriptor & brute-force matcher
 
-If you use this code in an academic work, please cite me by name (Christopher Parker) and link to this repository. Pull requests (and feature requests!) are encouraged. This repository is under active development (on a local branch).
+This is a high performance GPU implementation of the [LATCH descriptor](http://www.openu.ac.il/home/hassner/projects/LATCH/) invented by [Gil Levi](https://gilscvblog.com/2015/11/07/performance-evaluation-of-binary-descriptor-introducing-the-latch-descriptor/) and [Tal Hassner](http://www.openu.ac.il/home/hassner/). Please reference: "LATCH: Learned Arrangements of Three Patch Codes", IEEE Winter Conference on Applications of Computer Vision (WACV), Lake Placid, NY, USA, March, 2016.
+
+Pull requests (and feature requests!) are encouraged. This repository is under active development.
 
 [![IMAGE ALT TEXT](http://img.youtube.com/vi/zmfLZY7T6Qg/0.jpg)](http://www.youtube.com/watch?v=zmfLZY7T6Qg "Video Title")
 
@@ -26,10 +28,11 @@ Approximate order of upcoming features:
 - 512 bit matcher (increased matcher speed)
 - API improvements (currently a mess)
 - CUDA implementation of adaptive grid FAST detector
+- offline parameter optimization with PyGMO
 - integration into OpenCV
 
 Multi-GPU support is not currently planned. Please contact me if you have a use case that requires it.
 
-This work is released under a Creative Commons Attribution-ShareAlike license.
+This work is released under a Creative Commons Attribution-ShareAlike license. If you use this code in an academic work, please cite me by name (Christopher Parker) and link to this repository.
 
 Please email me if you have any questions: csparker.work@gmail.com
