@@ -1,4 +1,4 @@
-u#include <vector>
+#include <vector>
 #include <iostream>
 #include <time.h>
 #include "cuda.h"
@@ -58,16 +58,22 @@ int main( int argc, char** argv ) {
     unsigned char *d_I;
     unsigned int *d_D1, *d_D2;
     int *d_K, *d_M1, *d_M2;
+    float *d_K, *d_mask;
     cudaCalloc((void **) &d_K, sizeK);
     cudaCalloc((void **) &d_I, sizeI);
     cudaCalloc((void **) &d_D1, sizeD);
     cudaCalloc((void **) &d_D2, sizeD);
     cudaCalloc((void **) &d_M1, sizeM);
     cudaCalloc((void **) &d_M2, sizeM);
+    cudaCalloc((void **) &d_mask, sizeM);
 
     // The patch triplet locations for LATCH fits in texture memory cache.
     cudaArray* triplets;
-    loadPatchTriplets(triplets);
+    initPatchTriplets(triplets);
+
+    size_t pitch;
+    initImage(&d_I, imgWidth, imgHeight, &pitch);
+    initMask(&d_mask, h_mask);
 
     // Events allow asynchronous, nonblocking launch of subsequent kernels after a given event has happened.
     cudaEvent_t latchFinishedEvent;
@@ -83,8 +89,11 @@ int main( int argc, char** argv ) {
 
     t = clock(); // Begin timing kernel launches.
     // LATCH runs on the default stream and will block until it is finished.
-    latch( img1g.data, h_K1, d_D1, &numKP1, maxKP, d_K, d_I, &keypoints1, imgWidth, imgHeight, latchFinishedEvent ); // The latchFinishedEvent will be overridden by the next LATCH launch.  (this one will be ignored)
-    latch( img2g.data, h_K2, d_D2, &numKP2, maxKP, d_K, d_I, &keypoints2, imgWidth, imgHeight, latchFinishedEvent ); // This call will only begin after the above has completed. (but is still non blocking)
+    latch( img1g, d_I, pitch, h_K1, d_D1, &numKP1, maxKP, d_K, &keypoints1, d_mask, latchFinishedEvent);
+    latch( img2g, d_I, pitch, h_K2, d_D2, &numKP2, maxKP, d_K, &keypoints2, d_mask, latchFinishedEvent);
+
+    // latch( img1g, h_K1, d_D1, &numKP1, maxKP, d_K, d_I, &keypoints1, imgWidth, imgHeight, latchFinishedEvent ); // The latchFinishedEvent will be overridden by the next LATCH launch.  (this one will be ignored)
+    // latch( img2g, h_K2, d_D2, &numKP2, maxKP, d_K, d_I, &keypoints2, imgWidth, imgHeight, latchFinishedEvent ); // This call will only begin after the above has completed. (but is still non blocking)
     bitMatcher( d_D1, d_D2, numKP1, numKP2, maxKP, d_M1, matchThreshold, stream1, latchFinishedEvent ); // Each concurrent bitMatcher launch should get its own d_M# pointer and its own stream#
     bitMatcher( d_D2, d_D1, numKP2, numKP1, maxKP, d_M2, matchThreshold, stream2, latchFinishedEvent ); // Both bitMatcher launches will start in parallel when the most recent call to LATCH completes.
     cout << "Launching kernels took " << 1000*(clock() - t)/(float)CLOCKS_PER_SEC << " milliseconds." << endl;

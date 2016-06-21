@@ -73,7 +73,8 @@ __global__ void __launch_bounds__(1024, 2)
                         const int imgWidth,
                         const int imgHeight,
                         const float *g_mask/*,
-                        const float *g_oriented*/) {
+                        const float *g_oriented*/,
+                    float *g_out) {
     volatile __shared__ int s_kpOffset[2];
     volatile __shared__ float s_mask[64];
     volatile __shared__ float s_stride[4];
@@ -174,14 +175,14 @@ __global__ void __launch_bounds__(1024, 2)
     const register int wrappedY = 2 * (threadIdx.x / patchSize); // Each thread will use both wrappedY and wrappedY+1
     __syncthreads();
     __threadfence_block();
-    // if (blockIdx.x == 0) {
-    //     g_out[(threadIdx.y            )*64 + (threadIdx.x            )] = s_roi[threadIdx.y            ][threadIdx.x            ][0];
-    //     g_out[(threadIdx.y            )*64 + (threadIdx.x + _warpSize)] = s_roi[threadIdx.y            ][threadIdx.x + _warpSize][0];
-    //     g_out[(threadIdx.y + _warpSize)*64 + (threadIdx.x + _warpSize)] = s_roi[threadIdx.y + _warpSize][threadIdx.x + _warpSize][0];
-    //     g_out[(threadIdx.y + _warpSize)*64 + (threadIdx.x            )] = s_roi[threadIdx.y + _warpSize][threadIdx.x            ][0];
-    // }
-    // __syncthreads();
-    // __threadfence_block();
+    if (blockIdx.x == 0) {
+        g_out[(threadIdx.y            )*64 + (threadIdx.x            )] = s_roi[threadIdx.y            ][threadIdx.x            ][0];
+        g_out[(threadIdx.y            )*64 + (threadIdx.x + _warpSize)] = s_roi[threadIdx.y            ][threadIdx.x + _warpSize][0];
+        g_out[(threadIdx.y + _warpSize)*64 + (threadIdx.x + _warpSize)] = s_roi[threadIdx.y + _warpSize][threadIdx.x + _warpSize][0];
+        g_out[(threadIdx.y + _warpSize)*64 + (threadIdx.x            )] = s_roi[threadIdx.y + _warpSize][threadIdx.x            ][0];
+    }
+    __syncthreads();
+    __threadfence_block();
 
 
     const register float mask0 = s_mask[threadIdx.x];
@@ -388,7 +389,7 @@ float computeGradient(const unsigned char* img, const int width, const int x, co
     return atan2f(dy, dx);
 }
 
-void latch( Mat imgMat,
+void latchAff( Mat imgMat,
             unsigned char* d_I,
             size_t pitch,
             float* h_K,
@@ -398,7 +399,9 @@ void latch( Mat imgMat,
             float* d_K,
             vector<KeyPoint>* vectorKP,
             float* d_mask,
-            cudaEvent_t latchFinished) {
+            cudaEvent_t latchFinished,
+            Mat outMat,
+            RotatedRect rekt) {
     const unsigned char* h_I = imgMat.data;
     const int height = imgMat.rows;
     const int width = imgMat.cols;
@@ -414,8 +417,8 @@ void latch( Mat imgMat,
         h_K[5*i  ] = (*vectorKP)[i].pt.x;
         h_K[5*i+1] = (*vectorKP)[i].pt.y;
         h_K[5*i+2] = 1.0f; // (*vectorKP)[i].size);
-        h_K[4*i+3] = 1.0f;
-        h_K[5*i+4] = 0.0f;//computeGradient(h_I, width, h_K[5*i  ], h_K[5*i+1]);
+        // h_K[4*i+3] = (*vectorKP)[i].angle;
+        h_K[5*i+3] = computeGradient(h_I, width, h_K[5*i  ], h_K[5*i+1]);
     }
     for (int i=*keypoints; i<maxKP; i++) {
         h_K[5*i  ] = -1.0f;
@@ -423,15 +426,42 @@ void latch( Mat imgMat,
         h_K[5*i+2] = -1.0f;
         h_K[5*i+3] = -1.0f;
     }
+    h_K[0] = rekt.center.x;
+    h_K[1] = rekt.center.y;
+    h_K[2] = (rekt.size.width)/64;
+    h_K[3] = (rekt.size.height)/64;
+    h_K[4] = -3.1415926535f*rekt.angle/180.0f;
+    cerr << h_K[0] << endl;
+    cerr << h_K[1] << endl;
+    cerr << h_K[2] << endl;
+    cerr << h_K[3] << endl;
+    cerr << h_K[4] << endl;
 
     size_t sizeK = *keypoints * sizeof(float) * 5;
     cudaMemcpyAsync(d_K, h_K, sizeK, cudaMemcpyHostToDevice);
 
+    float *d_out, *h_out;
+    size_t sizeOut = sizeof(float) * 64 * 64;
+    cudaMallocHost((void **) &h_out, sizeOut);
+    cudaCalloc((void **) &d_out, sizeOut);
+
 
     dim3 threadsPerBlock(_warpSize, warpsPerBlock);
     dim3 blocksPerGrid(*keypoints, 1, 1);
-    // checkLaunchError();
-    latch<<<blocksPerGrid, threadsPerBlock>>>(d_K, d_D, width, height, d_mask);
-    // checkLaunchError();
+    checkLaunchError();
+    latch<<<blocksPerGrid, threadsPerBlock>>>(d_K, d_D, width, height, d_mask, d_out);
+    cudaDeviceSynchronize();
+    cudaMemcpy(h_out, d_out, sizeOut, cudaMemcpyDeviceToHost);
+    cudaDeviceSynchronize();
+    for (int j=0; j<64; j++) {
+        for (int i=0; i<64; i++) {
+            outMat.at<uchar>(j, 3*i) = h_out[j*64+i];
+            outMat.at<uchar>(j, 3*i+1) = h_out[j*64+i];
+            outMat.at<uchar>(j, 3*i+2) = h_out[j*64+i];
+            // cerr << " " << h_out[j*64+i];
+        }
+    }
+    cerr << endl;
+    checkLaunchError();
     cudaEventRecord(latchFinished);
 }

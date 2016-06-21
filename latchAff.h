@@ -1,4 +1,4 @@
-void latch( Mat,
+void latchAff( Mat,
             unsigned char *,
             size_t,
             float *,
@@ -8,8 +8,10 @@ void latch( Mat,
             float *,
             vector<KeyPoint>*,
             float*,
-            cudaEvent_t);
- 
+            cudaEvent_t,
+            Mat,
+            RotatedRect);
+
 void initPatchTriplets(cudaArray*);
 
 void initImage(    unsigned char**,

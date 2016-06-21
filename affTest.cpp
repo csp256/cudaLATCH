@@ -7,9 +7,9 @@
 #include "opencv2/opencv.hpp"
 using namespace std;
 using namespace cv;
-#include "latch.h"
+#include "latchAff.h"
 #include "bitMatcher.h"
-// #include "gpuFacade.hpp"
+//#include "gpuFacade.hpp"
 
 #define cudaCalloc(A, B) \
     do { \
@@ -113,10 +113,11 @@ int main( int argc, char** argv ) {
     double data[]= {f*WIDTH,  0.0,  WIDTH*0.5,  0.0, f*HEIGHT, HEIGHT*0.5, 0.0, 0.0, 1.0};
     Mat K(3, 3, CV_64F, data);
     Mat F, R, T, rod, mask;
-    Mat img0, img1, img2, img1g, img2g, imgMatches, E, rodOld;
+    Mat img0, img1, img2, img1g, img2g, imgMatches, E, rodOld, outMat1, outMat2;
 
     cap >> img1;
     cap >> img2;
+    img1 = imread("/home/chris/cv/data/affine/graffiti/img1.ppm", -1);
     cv::cvtColor(img1, img1g, CV_BGR2GRAY);
     cv::cvtColor(img2, img2g, CV_BGR2GRAY);
     if (showMatches) {
@@ -191,26 +192,74 @@ int main( int argc, char** argv ) {
     cudaStreamCreate(&streanumKP1);
     cudaStreamCreate(&streanumKP2);
 
-    FAST(img1g, keypoints1, threshold);
-    extractions += keypoints1.size();
-    latch( img1g, d_I, pitch, h_K1, d_D1, &numKP1, maxKP, d_K, &keypoints1, d_mask, latchFinished );
-    FAST(img2g, keypoints2, threshold); // This call to fast is concurrent with above execution.
-    extractions += keypoints2.size();
-    latch( img2g, d_I, pitch, h_K2, d_D2, &numKP2, maxKP, d_K, &keypoints2, d_mask, latchFinished );
-    bitMatcher( d_D1, d_D2, numKP1, numKP2, maxKP, d_M1, matchThreshold, streanumKP1, latchFinished );
-    bitMatcher( d_D2, d_D1, numKP2, numKP1, maxKP, d_M2, matchThreshold, streanumKP2, latchFinished );
-    timer = clock();
-    getMatches(maxKP, h_M1, d_M1);
-    getMatches(maxKP, h_M2, d_M2);
-    for (int i=0; i<numKP1; i++) {
-        if (h_M1[i] >= 0 && h_M1[i] < numKP2 && h_M2[h_M1[i]] == i) {
-            goodMatches.push_back( DMatch(i, h_M1[i], 0)); // For drawing.
-            p1.push_back(keypoints1[i].pt); // For recovering pose.
-            p2.push_back(keypoints2[h_M1[i]].pt);
-        }
-    }
 
-    img1.copyTo(img0);
+    FAST(img1g, keypoints1, threshold);
+    // extractions += keypoints1.size();
+    // latchAff( img1g, d_I, pitch, h_K1, d_D1, &numKP1, maxKP, d_K, &keypoints1, d_mask, latchFinished, outMat1 );
+
+    Ptr<MSER> mserExtractor  = MSER::create();
+
+    vector<vector<cv::Point> > mserContours;
+    vector<KeyPoint> mserKeypoint;
+    vector<Rect> mserBbox;
+    mserExtractor->detectRegions(img1g, mserContours, mserBbox);
+
+    outMat1 = img1.clone();
+    outMat2 = img1.clone();
+resize(outMat2, outMat2, Size(64,64));
+
+    // cerr << outMat1.depth() << " (()) " << outMat1.channels() << " (()) " << outMat1.type() << endl;
+    // for (int i=0; i<mserContours.size(); i+=320) {
+    //     ellipse(outMat1, fitEllipse(mserContours[i]), Scalar(255,0,0));
+    // }
+// cerr << "** " << fitEllipse(mserContours[640]) << endl;
+    RotatedRect rekt = fitEllipse(mserContours[640]);
+    rekt.center.y = rekt.center.y - 330;
+    rekt.angle = 130;
+    ellipse(outMat1, rekt, Scalar(0,255,0), 3);
+
+    latchAff( img1g, d_I, pitch, h_K1, d_D1, &numKP1, maxKP, d_K, &keypoints1, d_mask, latchFinished, outMat2, rekt);
+
+
+    // for (vector<cv::Point> v : mserContours){
+    //     for (cv::Point p : v){
+    //         outMat1.at<uchar>(p.y, p.x*3+0) = 255;
+    //         outMat1.at<uchar>(p.y, p.x*3+1) = 255;
+    //         outMat1.at<uchar>(p.y, p.x*3+2) = 255;
+    //     }
+    // }
+
+    // ms(box, regions, Mat());
+    //  for (int i = 0; i < regions.size(); i++)
+    //  {
+    //      ellipse(box, fitEllipse(regions[i]), Scalar(255));
+    //  }
+
+    // FAST(img2g, keypoints2, threshold); // This call to fast is concurrent with above execution.
+    // extractions += keypoints2.size();
+    // latchAff( img2g, d_I, pitch, h_K2, d_D2, &numKP2, maxKP, d_K, &keypoints2, d_mask, latchFinished, outMat2 );
+    // bitMatcher( d_D1, d_D2, numKP1, numKP2, maxKP, d_M1, matchThreshold, streanumKP1, latchFinished );
+    // bitMatcher( d_D2, d_D1, numKP2, numKP1, maxKP, d_M2, matchThreshold, streanumKP2, latchFinished );
+    // timer = clock();
+    // getMatches(maxKP, h_M1, d_M1);
+    // getMatches(maxKP, h_M2, d_M2);
+    // for (int i=0; i<numKP1; i++) {
+    //     if (h_M1[i] >= 0 && h_M1[i] < numKP2 && h_M2[h_M1[i]] == i) {
+    //         goodMatches.push_back( DMatch(i, h_M1[i], 0)); // For drawing.
+    //         p1.push_back(keypoints1[i].pt); // For recovering pose.
+    //         p2.push_back(keypoints2[h_M1[i]].pt);
+    //     }
+    // }
+    //
+    // drawMatches( img1, keypoints1, img2, keypoints2,
+    //     goodMatches, imgMatches, Scalar::all(-1), Scalar::all(-1),
+    //     vector<char>(), DrawMatchesFlags::NOT_DRAW_SINGLE_POINTS );
+    imshow( "Video", outMat1 );
+    imshow( "Matches", outMat2 );
+    waitKey(0);
+    return 0;
+
+/*    img1.copyTo(img0);
     img2.copyTo(img1);
     cap.read(img2);
     cvtColor(img2, img2g, CV_BGR2GRAY);
@@ -401,4 +450,5 @@ int main( int argc, char** argv ) {
     cerr << "Extractions: " << extractions << endl;
 
     return 0;
+*/
 }

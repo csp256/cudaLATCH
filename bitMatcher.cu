@@ -30,6 +30,25 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
    }
 }
 
+#define checkLaunchError()                                          \
+do {                                                                  \
+    /* Check synchronous errors, i.e. pre-launch */                   \
+    cudaError_t err = cudaGetLastError();                             \
+    if (cudaSuccess != err) {                                         \
+        fprintf (stderr, "Cuda error in file '%s' in line %i : %s.\n",\
+                 __FILE__, __LINE__, cudaGetErrorString(err) );       \
+        exit(EXIT_FAILURE);                                           \
+    }                                                                 \
+    /* Check asynchronous errors, i.e. kernel failed (ULF) */         \
+    err = cudaThreadSynchronize();                                    \
+    if (cudaSuccess != err) {                                         \
+        fprintf (stderr, "Cuda error in file '%s' in line %i : %s.\n",\
+                 __FILE__, __LINE__, cudaGetErrorString( err) );      \
+        exit(EXIT_FAILURE);                                           \
+    }                                                                 \
+} while (0)
+
+
 // Launch as 32x32
 __global__ void __launch_bounds__(1024, 1)
                 bitMatch(   const unsigned int *g_query,
@@ -189,10 +208,14 @@ void bitMatcher(unsigned int* d_Q, unsigned int* d_T, int keypointsQ, int keypoi
     dim3 blocksPerGrid(neededBlocks, 1, 1);
 
     cudaStreamWaitEvent(stream, event, 0);
+    // checkLaunchError();
     bitMatch<<<blocksPerGrid, threadsPerBlock, 0, stream>>>(d_Q, d_T, d_M, keypointsT, threshold);
+    // checkLaunchError();
 }
 
 void getMatches(int maxKP, int* h_M, int* d_M) {
     size_t sizeM = maxKP * sizeof(int);
+    checkLaunchError();
     cudaMemcpyAsync(h_M, d_M, sizeM, cudaMemcpyDeviceToHost);
+    checkLaunchError();
 };
