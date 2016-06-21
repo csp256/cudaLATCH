@@ -32,6 +32,6 @@ Approximate order of planned features:
 
 Multi-GPU support is not currently planned. Please contact me if you have a use case that requires it.
 
-This work is released under a Creative Commons Attribution-ShareAlike license. If you use this code in an academic work, please cite me by name ([Christopher Parker](https://github.com/csp256/)) and link to this repository.
+This work is released under a Creative Commons Attribution-ShareAlike license. If you use this code in an academic work, please cite me by name ([Christopher Parker](https://github.com/csp256/)) and link to [this repository](https://github.com/csp256/cudaLATCH/).
 
 Please email me if you have any questions: csparker.work@gmail.com
