@@ -26,6 +26,8 @@ using namespace cv;
 #define paddingBitsPerDescriptor (1536)
 #define bitsPerUInt32 (32)
 #define deg2rad (0.0174533f)
+#define negDeg2rad (-0.0174533f)
+#define inv64 (0.015625f)
 #define CHECK_BORDER (0)
 
 // Used to store the oracle of patch triplets.
@@ -96,10 +98,10 @@ __global__ void __launch_bounds__(1024, 2)
             }
             register float c, s, t; // cos and sin and theta
             t = __shfl(l, 2);
-            __sincosf(t, &s, &c);
-            register float a,b;
-            a = __shfl(l, 0);
-            b = __shfl(l, 1);
+            __sincosf(negDeg2rad*t, &s, &c);
+
+            const register float a = __shfl(l, 0);
+            const register float b = __shfl(l, 1);
 
             register float p, q;
             if ((threadIdx.x & 1) == 0) {
@@ -113,7 +115,7 @@ __global__ void __launch_bounds__(1024, 2)
                 q = c;
             }
 
-            s_stride[threadIdx.x] = p*q;
+            s_stride[threadIdx.x] = p*q*inv64;
         }
         if (threadIdx.y == 2) {
             mask0 = g_mask[threadIdx.x];
@@ -413,20 +415,18 @@ void latch( Mat imgMat,
     for (int i=0; i<*keypoints; i+=1) {
         h_K[5*i  ] = (*vectorKP)[i].pt.x;
         h_K[5*i+1] = (*vectorKP)[i].pt.y;
-        h_K[5*i+2] = 1.0f; // (*vectorKP)[i].size);
-        h_K[4*i+3] = 1.0f;
-        h_K[5*i+4] = 0.0f;//computeGradient(h_I, width, h_K[5*i  ], h_K[5*i+1]);
+        h_K[5*i+2] = 64.0f; // WIDTH in pixels
+        h_K[5*i+3] = 64.0f; // HEIGHT in pixels
+        h_K[5*i+4] = 0.0f; // ANGLE in degrees (if openmvg uses radians, let me know)
     }
     for (int i=*keypoints; i<maxKP; i++) {
-        h_K[5*i  ] = -1.0f;
-        h_K[5*i+1] = -1.0f;
-        h_K[5*i+2] = -1.0f;
-        h_K[5*i+3] = -1.0f;
+        for (int j=0; j<5; j++) {
+            h_K[5*i+j] = -1.0f;
+        }
     }
 
     size_t sizeK = *keypoints * sizeof(float) * 5;
     cudaMemcpyAsync(d_K, h_K, sizeK, cudaMemcpyHostToDevice);
-
 
     dim3 threadsPerBlock(_warpSize, warpsPerBlock);
     dim3 blocksPerGrid(*keypoints, 1, 1);

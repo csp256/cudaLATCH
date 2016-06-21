@@ -26,6 +26,7 @@ using namespace cv;
 #define paddingBitsPerDescriptor (1536)
 #define bitsPerUInt32 (32)
 #define deg2rad (0.0174533f)
+#define negDeg2rad (-0.0174533f)
 #define CHECK_BORDER (0)
 
 // Used to store the oracle of patch triplets.
@@ -97,10 +98,10 @@ __global__ void __launch_bounds__(1024, 2)
             }
             register float c, s, t; // cos and sin and theta
             t = __shfl(l, 2);
-            __sincosf(t, &s, &c);
+            __sincosf(negDeg2rad*t, &s, &c);
             register float a,b;
-            a = __shfl(l, 0);
-            b = __shfl(l, 1);
+            a = __shfl(l, 0) * 0.015625f;
+            b = __shfl(l, 1) * 0.015625f;
 
             register float p, q;
             if ((threadIdx.x & 1) == 0) {

@@ -202,7 +202,7 @@ int main( int argc, char** argv ) {
     vector<vector<cv::Point> > mserContours;
     vector<KeyPoint> mserKeypoint;
     vector<Rect> mserBbox;
-    mserExtractor->detectRegions(img1g, mserContours, mserBbox);
+    mserExtractor->detect(img1g, mserContours, mserBbox);
 
     outMat1 = img1.clone();
     outMat2 = img1.clone();
