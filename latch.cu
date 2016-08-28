@@ -103,17 +103,8 @@ __global__ void __launch_bounds__(1024, 2)
             const register float a = __shfl(l, 0);
             const register float b = __shfl(l, 1);
 
-            register float p, q;
-            if ((threadIdx.x & 1) == 0) {
-                p = a;
-            } else {
-                p = b;
-            }
-            if (threadIdx.x == 1 || threadIdx.x == 2) {
-                q = s;
-            } else {
-                q = c;
-            }
+            const register float p = ((threadIdx.x & 1) == 0) ? a : b;
+            const register float q = (threadIdx.x == 1 || threadIdx.x == 2) ? s : c;
 
             s_stride[threadIdx.x] = p*q*inv64;
         }
@@ -130,10 +121,8 @@ __global__ void __launch_bounds__(1024, 2)
         if (x < 0 || y < 0) {
             return; // This is the case if our keypoint is within boundary of the edge of the image. 5000 blocks returning in this way takes ~300 microseconds.
         }
-        register float r;
-        if (threadIdx.x < 4) {
-            r = s_stride[threadIdx.x];
-        }
+        const register float r = (threadIdx.x < 4) ? s_stride[threadIdx.x] : 0;
+        
         const register float r11 =  __shfl(r, 0);
         const register float r12 =  __shfl(r, 1);
         const register float r21 = -__shfl(r, 2);
@@ -188,9 +177,6 @@ __global__ void __launch_bounds__(1024, 2)
 
     const register float mask0 = s_mask[threadIdx.x];
     const register float mask1 = s_mask[threadIdx.x + _warpSize];
-    if (blockIdx.x == 0 && threadIdx.x == 0 && threadIdx.y == 0) {
-        // printf("%f %f masks\n", mask0, mask1);
-    }
 
     register int nextCoord = tex2D(patchTriplets, threadIdx.x, threadIdx.y); // This access is hardware cached.
     // register int offset = threadIdx.y * 3 * 16;
