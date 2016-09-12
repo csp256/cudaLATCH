@@ -1,3 +1,5 @@
+Major updates are coming in the immediate future. Please watch this space. 
+
 # CUDA implementation of the LATCH descriptor & brute-force matcher
 
 This is a high performance GPU implementation of the [LATCH descriptor](http://www.openu.ac.il/home/hassner/projects/LATCH/) invented by [Gil Levi](https://gilscvblog.com/2015/11/07/performance-evaluation-of-binary-descriptor-introducing-the-latch-descriptor/) and [Tal Hassner](http://www.openu.ac.il/home/hassner/). Please reference: "LATCH: Learned Arrangements of Three Patch Codes", IEEE Winter Conference on Applications of Computer Vision (WACV), Lake Placid, NY, USA, March, 2016.
